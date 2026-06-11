@@ -1,6 +1,6 @@
 # MCCE-MHGNN
 
-This repository contains `MCCE-MHGCN`, a static multilayer heterogeneous graph model for link prediction. It keeps the MHGCN-style layer-wise structural encoder, but replaces simple cross-layer propagation with MECCH-style metapath context encoding.
+This repository contains `MCCE-MHGCN`, a static multilayer heterogeneous graph model for link prediction. The current implementation reads a DGL `.bin` heterograph directly and uses masks stored in the graph for train/validation/test splits.
 
 ## Clone
 
@@ -9,91 +9,95 @@ git clone https://github.com/fuzhenkang/MCCE-MHGNN.git
 cd MCCE-MHGNN
 ```
 
+## Environment
+
+The intended runtime is:
+
+```text
+PyTorch == 2.3.0
+DGL >= 2.1.0
+```
+
+Install a DGL build compatible with your PyTorch 2.3.0 and CUDA environment.
+
+```bash
+pip install -r requirements.txt
+```
+
 ## Architecture
 
 ```text
-Layer features + intra-layer adjacency + cross-layer adjacency grid
-  -> DGL heterograph construction for intra-layer and cross-layer relations
+DGL .bin heterograph
+  -> read node features from graph.ndata[feat]
+  -> read train/valid/test splits from target edge masks
   -> layer-wise DGL message-passing GCN structural encoder
-  -> automatic metapath enumeration by length and closure type
-  -> stacked DGL block-style MECCH metapath context layers
+  -> automatic metapath enumeration from DGL canonical etypes
+  -> DGL metapath-reachable MECCH context encoding
   -> MECCH-style fusion over metapath-context channels
-  -> gate fusion with target-layer structural embedding
-  -> DistMult target-layer or cross-layer link prediction
+  -> gate fusion with structural embedding
+  -> DistMult target-edge link prediction
   -> positive-negative logsigmoid loss
 ```
 
-## Main Changes
-
-- Intra-layer GCN now uses DGL message passing instead of direct sparse matrix multiplication.
-- Cross-layer MECCH context also uses DGL metapath-reachable edge types and `multi_update_all` style aggregation.
-- Intra-layer encoding is controlled by `--gnn-layers`; no `intra_order` parameter is used.
-- Link prediction defaults to DistMult: `score = sum(z_source * r * z_target)`.
-- Legacy `dot` and `mlp` predictors remain available for ablation.
-
 ## Data Format
 
-Training still starts from `.mat` plus split text files. The loader converts graph matrices into DGL heterographs internally.
+The model no longer reads `.mat` adjacency matrices or split `.txt` files. Use a DGL graph saved by:
 
-Required `graph.mat` fields:
+```python
+import dgl
 
-```text
-features_by_layer: cell/list of layer feature matrices, each [num_nodes_i, feature_dim_i]
-intra_adj:         cell/list of intra-layer adjacency matrices, each [num_nodes_i, num_nodes_i]
-cross_adj:         num_layers x num_layers cell matrix
+dgl.save_graphs("graph.bin", [g])
 ```
 
-The cross-layer convention is:
+The saved graph should be a DGL heterograph.
+
+### Node Data
+
+Every node type used by the model must contain a feature tensor:
 
 ```text
-cross_adj[target_layer][source_layer]
-shape = [num_target_nodes, num_source_nodes]
+g.nodes[ntype].data["feat"]: shape [num_nodes, feature_dim]
 ```
 
-Optional fields:
+Use `--feat-key` if the feature key is not `feat`.
+
+### Edge Data Masks
+
+The target canonical edge type must contain masks:
 
 ```text
-target_layer
-layer_names
-edge_index
-edge_label
+g.edges[target_etype].data["train_mask"]
+g.edges[target_etype].data["val_mask"] or g.edges[target_etype].data["valid_mask"]
+g.edges[target_etype].data["test_mask"]
 ```
 
-Split files support:
+Masks should be boolean tensors with length equal to the number of edges in the target edge type. These masks define positive edges for each split. Negative edges are sampled dynamically from node pairs that are not present in the full target relation.
+
+The target edge type can be provided as:
 
 ```text
-src dst label
-type src dst label
+--target-etype source_type:relation_type:target_type
 ```
 
-For dynamic negative sampling, `train.txt` may contain only positive pairs:
+or as a unique relation name:
 
 ```text
-src dst
+--target-etype relation_type
 ```
 
-For cross-layer prediction, edge files use:
-
-```text
-source_id target_id label
-```
+If omitted, the script uses the first edge type that has `train_mask` plus validation/test masks.
 
 ## Training
 
-Example intra-layer author link prediction:
+Example:
 
 ```bash
 python Train_Evaluate.py \
-  --graph-path ../data/aminer_mlhgcn_static/graph.mat \
-  --train-path ../data/aminer_mlhgcn_static/train.txt \
-  --valid-path ../data/aminer_mlhgcn_static/valid.txt \
-  --test-path ../data/aminer_mlhgcn_static/test.txt \
-  --target-layer 1 \
-  --link-task intra \
+  --graph-bin data/graph.bin \
+  --target-etype author:coauthor:author \
+  --feat-key feat \
   --target-message-graph train \
-  --train-negative-mode dynamic \
   --negative-ratio 1.0 \
-  --negative-exclude-graph full \
   --metapath-length 3 \
   --metapath-closure closed \
   --context-model mecch \
@@ -104,49 +108,47 @@ python Train_Evaluate.py \
   --hidden-dim 128 \
   --gnn-layers 2 \
   --number-layers 1 \
-  --intra-sample-size 16 \
   --epochs 200 \
   --patience 10 \
   --early-stop-metric auc \
   --log-every 10
 ```
 
-Example cross-layer prediction:
+`--target-message-graph train` removes non-training target edges from message passing, reducing validation/test leakage. `--target-message-graph full` keeps all target edges for ablation.
+
+## Metapaths
+
+By default, metapaths are automatically enumerated from DGL `canonical_etypes` up to `--metapath-length`.
+
+You can also pass explicit metapaths:
 
 ```bash
-python Train_Evaluate.py \
-  --graph-path ../data/aminer_mlhgcn_static/graph.mat \
-  --train-path ../data/aminer_mlhgcn_static/cross_train.txt \
-  --valid-path ../data/aminer_mlhgcn_static/cross_valid.txt \
-  --test-path ../data/aminer_mlhgcn_static/cross_test.txt \
-  --link-task cross \
-  --source-layer 1 \
-  --target-layer 0 \
-  --target-message-graph train \
-  --train-negative-mode dynamic \
-  --negative-ratio 1.0 \
-  --negative-exclude-graph full \
-  --metapath-closure both \
-  --metapath-length 3 \
-  --predictor distmult
+--metapaths writes>written_by,affiliated_with>has_member
 ```
+
+or with canonical edge types:
+
+```bash
+--metapaths author:writes:paper>paper:written_by:author,author:affiliated_with:org>org:has_member:author
+```
+
+Each metapath must be type-continuous: the destination node type of one edge type must equal the source node type of the next edge type.
 
 ## Important Parameters
 
 ```text
+--graph-bin               DGL .bin file saved by dgl.save_graphs.
+--graph-index             Graph index inside the .bin file. Default: 0.
+--target-etype            Target edge type for link prediction.
+--feat-key                Node feature key. Default: feat.
 --gnn-layers              Number of ordinary intra-layer GCN layers.
---metapath-length         Maximum edge length for automatic typed-path enumeration.
+--metapath-length         Maximum length for automatic metapath enumeration.
 --metapath-closure        closed, open, or both.
 --number-layers           Number of stacked MECCH-style context layers.
---context-model           mecch, han, or magnn.
---context-encoder         mean or attention for MECCH-style channels.
+--context-encoder         mean or attention.
 --metapath-fusion         mean, weight, conv, or cat.
 --fusion-mode             intra, context, or both.
 --predictor               distmult, dot, or mlp.
 --target-message-graph    train or full.
---train-negative-mode     dynamic or file.
+--negative-ratio          Number of sampled negatives per positive edge.
 ```
-
-## Dependencies
-
-The code targets PyTorch CUDA builds such as `2.2.3+cu121` or `2.5.0+cu121` with a compatible DGL build. Install the DGL wheel that matches your local PyTorch/CUDA environment.
