@@ -7,6 +7,7 @@ from sklearn.metrics import auc, f1_score, precision_recall_curve
 
 from src.Model import MCCE_MHGCN, MCCE_MHGCNLinkPredictor
 from src.Utils import get_edge_mask, get_node_features, load_dgl_bin_graph, parse_canonical_etype
+from src.baselines import build_baseline_encoder
 
 
 def canonical_etype_to_text(etype):
@@ -198,6 +199,7 @@ def main():
     parser.add_argument("--graph-index", type=int, default=0)
     parser.add_argument("--target-etype", type=str, default=None, help="Canonical etype as src:rel:dst, or a unique relation name.")
     parser.add_argument("--feat-key", type=str, default="feat")
+    parser.add_argument("--model", type=str, default="mcce", choices=["mcce", "han", "hgt", "rgcn"])
     parser.add_argument("--no-cuda", action="store_true", default=False)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--epochs", type=int, default=200)
@@ -205,6 +207,8 @@ def main():
     parser.add_argument("--weight-decay", type=float, default=5e-6)
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument("--gnn-layers", type=int, default=2)
+    parser.add_argument("--num-heads", type=int, default=4, help="Attention heads for HAN/HGT baselines.")
+    parser.add_argument("--num-bases", type=int, default=-1, help="Reserved for RGCN compatibility.")
     parser.add_argument("--dropout", type=float, default=0.5)
     parser.add_argument("--target-message-graph", type=str, default="train", choices=["train", "full"])
     parser.add_argument("--negative-ratio", type=float, default=1.0)
@@ -252,25 +256,40 @@ def main():
     )
     if not metapaths:
         raise ValueError("No valid metapaths were found in the DGL graph schema.")
+    print("Model: {}".format(args.model))
     print("Target etype: {}".format(canonical_etype_to_text(target_etype)))
     print("Enumerated metapaths: {}".format(", ".join(format_metapath(path) for path in metapaths)))
 
-    encoder = MCCE_MHGCN(
-        message_graph,
-        input_dims=input_dims,
-        hidden_dim=args.hidden_dim,
-        gnn_layers=args.gnn_layers,
-        dropout=args.dropout,
-        use_gate=not args.no_gate,
-        metapaths=metapaths,
-        metapath_fusion=args.metapath_fusion,
-        context_encoder=args.context_encoder,
-        context_use_v=args.context_use_v,
-        context_heads=args.context_heads,
-        number_layers=args.number_layers,
-        fusion_mode=args.fusion_mode,
-        context_model=args.context_model,
-    )
+    if args.model == "mcce":
+        encoder = MCCE_MHGCN(
+            message_graph,
+            input_dims=input_dims,
+            hidden_dim=args.hidden_dim,
+            gnn_layers=args.gnn_layers,
+            dropout=args.dropout,
+            use_gate=not args.no_gate,
+            metapaths=metapaths,
+            metapath_fusion=args.metapath_fusion,
+            context_encoder=args.context_encoder,
+            context_use_v=args.context_use_v,
+            context_heads=args.context_heads,
+            number_layers=args.number_layers,
+            fusion_mode=args.fusion_mode,
+            context_model=args.context_model,
+        )
+    else:
+        encoder = build_baseline_encoder(
+            args.model,
+            message_graph,
+            input_dims=input_dims,
+            hidden_dim=args.hidden_dim,
+            gnn_layers=args.gnn_layers,
+            dropout=args.dropout,
+            metapaths=metapaths,
+            target_etype=target_etype,
+            num_heads=args.num_heads,
+            num_bases=args.num_bases,
+        )
     model = MCCE_MHGCNLinkPredictor(
         encoder,
         target_etype=target_etype,
