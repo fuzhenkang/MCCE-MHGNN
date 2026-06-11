@@ -1,4 +1,12 @@
+import sys
+import types
+
+
 def import_dgl():
+    if "dgl.graphbolt" not in sys.modules:
+        graphbolt = types.ModuleType("dgl.graphbolt")
+        graphbolt.__all__ = []
+        sys.modules["dgl.graphbolt"] = graphbolt
     try:
         import dgl
     except ImportError as exc:
