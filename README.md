@@ -2,6 +2,13 @@
 
 This repository contains `MCCE-MHGCN`, a static multilayer heterogeneous graph model for link prediction. It keeps the MHGCN-style layer-wise structural encoder, but replaces simple cross-layer propagation with MECCH-style metapath context encoding.
 
+## Clone
+
+```bash
+git clone https://github.com/fuzhenkang/MCCE-MHGNN.git
+cd MCCE-MHGNN
+```
+
 ## Architecture
 
 ```text
