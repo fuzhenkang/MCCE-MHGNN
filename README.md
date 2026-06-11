@@ -30,14 +30,14 @@ pip install -r requirements.txt
 DGL .bin heterograph
   -> read node features from graph.ndata[feat]
   -> read train/valid/test splits from target edge masks
-  -> layer-wise DGL message-passing GCN structural encoder
-  -> automatic metapath enumeration from DGL canonical etypes
-  -> DGL metapath-reachable MECCH context encoding
-  -> MECCH-style fusion over metapath-context channels
-  -> gate fusion with structural embedding
-  -> DistMult target-edge link prediction
+  -> choose encoder: MCCE-MHGCN, HAN, HGT, or RGCN
+  -> DistMult / dot / MLP target-edge link prediction
+  -> dynamic negative sampling
   -> positive-negative logsigmoid loss
+  -> validation/test AUC, PR-AUC, F1
 ```
+
+`MCCE-MHGCN` keeps the original multilayer heterogeneous metapath-context encoder. The new baseline encoders in `src/baselines.py` reuse the same data loading, target-edge masks, negative sampling, loss, validation, and test logic.
 
 ## Data Format
 
@@ -89,13 +89,14 @@ If omitted, the script uses the first edge type that has `train_mask` plus valid
 
 ## Training
 
-Example:
+MCCE-MHGCN example:
 
 ```bash
 python Train_Evaluate.py \
   --graph-bin data/graph.bin \
   --target-etype author:coauthor:author \
   --feat-key feat \
+  --model mcce \
   --target-message-graph train \
   --negative-ratio 1.0 \
   --metapath-length 3 \
@@ -115,6 +116,63 @@ python Train_Evaluate.py \
 ```
 
 `--target-message-graph train` removes non-training target edges from message passing, reducing validation/test leakage. `--target-message-graph full` keeps all target edges for ablation.
+
+## Baselines
+
+The training script supports:
+
+```text
+--model mcce    MCCE-MHGCN encoder
+--model han     HAN metapath-reachable GAT plus semantic attention
+--model hgt     HGT heterogeneous attention over all canonical edge types
+--model rgcn    RGCN HeteroGraphConv over all canonical edge types
+```
+
+All baselines use the same target link predictor selected by `--predictor`, so you can compare them under the same DistMult, dot-product, or MLP scoring setting.
+
+RGCN example:
+
+```bash
+python Train_Evaluate.py \
+  --graph-bin data/graph.bin \
+  --target-etype author:coauthor:author \
+  --model rgcn \
+  --predictor distmult \
+  --hidden-dim 128 \
+  --gnn-layers 2 \
+  --epochs 200 \
+  --log-every 10
+```
+
+HGT example:
+
+```bash
+python Train_Evaluate.py \
+  --graph-bin data/graph.bin \
+  --target-etype author:coauthor:author \
+  --model hgt \
+  --num-heads 4 \
+  --predictor distmult \
+  --hidden-dim 128 \
+  --gnn-layers 2 \
+  --epochs 200
+```
+
+HAN example for the `author/paper/venue` graph:
+
+```bash
+python Train_Evaluate.py \
+  --graph-bin data/graph.bin \
+  --target-etype author:coauthor:author \
+  --model han \
+  --num-heads 4 \
+  --predictor distmult \
+  --hidden-dim 128 \
+  --metapaths author:coauthor:author,author:author_to_paper:paper>paper:paper_to_author:author,author:author_to_venue:venue>venue:venue_to_author:author,author:author_to_paper:paper>paper:paper_to_paper:paper>paper:paper_to_author:author,author:author_to_venue:venue>venue:venue_to_venue:venue>venue:venue_to_author:author \
+  --epochs 200
+```
+
+For HAN, `--hidden-dim` must be divisible by `--num-heads`, and the metapaths should be closed, such as `author-paper-author` or `author-venue-author`.
 
 ## Metapaths
 
@@ -141,7 +199,9 @@ Each metapath must be type-continuous: the destination node type of one edge typ
 --graph-index             Graph index inside the .bin file. Default: 0.
 --target-etype            Target edge type for link prediction.
 --feat-key                Node feature key. Default: feat.
---gnn-layers              Number of ordinary intra-layer GCN layers.
+--model                   mcce, han, hgt, or rgcn.
+--gnn-layers              Number of encoder layers for MCCE/RGCN/HGT.
+--num-heads               Number of attention heads for HAN/HGT.
 --metapath-length         Maximum length for automatic metapath enumeration.
 --metapath-closure        closed, open, or both.
 --number-layers           Number of stacked MECCH-style context layers.
