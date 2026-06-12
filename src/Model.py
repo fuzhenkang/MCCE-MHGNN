@@ -1,4 +1,4 @@
-﻿import math
+import math
 import sys
 import types
 
@@ -301,4 +301,3 @@ class MCCE_MHGCNLinkPredictor(nn.Module):
     def forward(self, graph, features, edge_index):
         embeddings = self.encoder(graph, features)
         return self.score_edges(embeddings, edge_index)
-
