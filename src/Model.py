@@ -79,10 +79,12 @@ class MECCHMetapathFusion(nn.Module):
 
 
 class MetapathContextEncoder(nn.Module):
-    def __init__(self, in_dim, encoder_type="mean", use_v=False, n_heads=8):
+    def __init__(self, in_dim, encoder_type="gcn", use_v=False, n_heads=8):
         super().__init__()
         if in_dim % n_heads != 0:
             raise ValueError("in_dim must be divisible by n_heads")
+        if encoder_type == "conv":
+            encoder_type = "gcn"
         self.encoder_type = encoder_type
         self.use_v = use_v
         self.n_heads = n_heads
@@ -93,12 +95,17 @@ class MetapathContextEncoder(nn.Module):
             self.k_linear = nn.Linear(in_dim, in_dim, bias=False)
             if use_v:
                 self.v_linear = nn.Linear(in_dim, in_dim, bias=False)
+        elif encoder_type == "gcn":
+            self.source_linear = nn.Linear(in_dim, in_dim, bias=False)
+            self.self_linear = nn.Linear(in_dim, in_dim, bias=True)
         elif encoder_type != "mean":
             raise ValueError("Unknown context encoder '{}'".format(encoder_type))
 
     def forward(self, target_embedding, embeddings, suffix_graphs):
         if self.encoder_type == "attention":
             return self._attention_forward(target_embedding, embeddings, suffix_graphs)
+        if self.encoder_type == "gcn":
+            return self._gcn_forward(target_embedding, embeddings, suffix_graphs)
         return self._mean_forward(target_embedding, embeddings, suffix_graphs)
 
     def _mean_forward(self, target_embedding, embeddings, suffix_graphs):
@@ -112,6 +119,19 @@ class MetapathContextEncoder(nn.Module):
                 message_sum = message_sum + graph.nodes[target_type].data.get("h_neigh", target_embedding.new_zeros(target_embedding.shape))
                 degree_sum = degree_sum + graph.in_degrees().to(target_embedding.device).float()
         return (message_sum + target_embedding) / (degree_sum.unsqueeze(-1) + 1.0).clamp_min(1.0)
+
+    def _gcn_forward(self, target_embedding, embeddings, suffix_graphs):
+        import dgl.function as fn
+        message_sum = target_embedding.new_zeros(target_embedding.shape)
+        degree_sum = target_embedding.new_zeros(target_embedding.shape[0])
+        for graph, source_type, target_type in suffix_graphs:
+            with graph.local_scope():
+                graph.nodes[source_type].data["h_src"] = self.source_linear(embeddings[source_type])
+                graph.update_all(fn.copy_u("h_src", "m"), fn.sum("m", "h_neigh"))
+                message_sum = message_sum + graph.nodes[target_type].data.get("h_neigh", target_embedding.new_zeros(target_embedding.shape))
+                degree_sum = degree_sum + graph.in_degrees().to(target_embedding.device).float()
+        neigh = message_sum / degree_sum.unsqueeze(-1).clamp_min(1.0)
+        return F.relu(self.self_linear(target_embedding) + neigh)
 
     def _attention_forward(self, target_embedding, embeddings, suffix_graphs):
         import dgl.function as fn
@@ -150,6 +170,12 @@ class MCCE_MHGCN(nn.Module):
         self.dropout = dropout
         self.use_gate = use_gate
         self.metapaths = metapaths
+        self.context_metapaths = [mp for mp in metapaths if all(etype[0] != etype[2] for etype in mp)]
+        if fusion_mode != "intra" and not self.context_metapaths:
+            raise ValueError("MCCE cross-layer context requires at least one metapath made only of heterogeneous edges")
+        dropped = len(self.metapaths) - len(self.context_metapaths)
+        if dropped > 0:
+            print("MCCE context ignores {} metapath(s) containing same-type edges.".format(dropped))
         self.number_layers = number_layers
         self.fusion_mode = fusion_mode
         self.input_projectors = nn.ModuleDict({ntype: nn.Linear(input_dims[ntype], hidden_dim) for ntype in self.ntypes})
@@ -168,7 +194,7 @@ class MCCE_MHGCN(nn.Module):
             encoders = nn.ModuleDict()
             fusers = nn.ModuleDict()
             for target in self.ntypes:
-                target_metapaths = [mp for mp in metapaths if mp[-1][2] == target]
+                target_metapaths = [mp for mp in self.context_metapaths if mp[-1][2] == target]
                 for mp in target_metapaths:
                     encoders[_metapath_key(mp)] = MetapathContextEncoder(hidden_dim, context_encoder, context_use_v, context_heads)
                 if target_metapaths:
@@ -192,7 +218,7 @@ class MCCE_MHGCN(nn.Module):
         if self._suffix_cache is not None:
             return self._suffix_cache
         cache = {}
-        for mp in self.metapaths:
+        for mp in self.context_metapaths:
             suffixes = []
             for start in range(0, len(mp)):
                 etype_suffix = [etype[1] for etype in mp[start:]]
@@ -209,7 +235,7 @@ class MCCE_MHGCN(nn.Module):
     def _context_embedding(self, graph, embeddings, target, layer_idx):
         suffix_cache = self._prepare_suffix_graphs(graph)
         contexts = []
-        target_metapaths = [mp for mp in self.metapaths if mp[-1][2] == target]
+        target_metapaths = [mp for mp in self.context_metapaths if mp[-1][2] == target]
         for mp in target_metapaths:
             key = _metapath_key(mp)
             encoder = self.context_encoders[layer_idx][key]
