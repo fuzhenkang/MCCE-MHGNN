@@ -30,7 +30,7 @@ pip install -r requirements.txt
 DGL .bin heterograph
   -> read node features from graph.ndata[feat]
   -> read train/valid/test splits from target edge masks
-  -> choose encoder: MCCE-MHGCN, HAN, HGT, RGCN, MAGNN, or HetGNN
+  -> choose encoder: MCCE-MHGCN, HAN, HGT, RGCN, MAGNN, HetGNN, or GTN
   -> DistMult / dot / MLP target-edge link prediction
   -> dynamic negative sampling
   -> positive-negative logsigmoid loss
@@ -130,6 +130,7 @@ The training script supports:
 --model rgcn    RGCN HeteroGraphConv over all canonical edge types
 --model magnn   MAGNN-style metapath instance encoding plus attention
 --model hetgnn  HetGNN-style heterogeneous neighbor aggregation plus type attention
+--model gtn     GTN-style soft relation selection over canonical edge types
 ```
 
 All baselines use the same target link predictor selected by `--predictor`, so you can compare them under the same DistMult, dot-product, or MLP scoring setting.
@@ -208,6 +209,22 @@ python Train_Evaluate.py \
 
 MAGNN uses closed metapaths and `--hidden-dim` must be divisible by `--num-heads`. HetGNN uses typed neighbors from the full DGL heterograph and does not require explicit metapaths.
 
+GTN example:
+
+```bash
+python Train_Evaluate.py \
+  --graph-bin data/graph.bin \
+  --target-etype author:coauthor:author \
+  --model gtn \
+  --gtn-channels 2 \
+  --predictor distmult \
+  --hidden-dim 128 \
+  --gnn-layers 2 \
+  --epochs 200
+```
+
+GTN learns channel-wise soft weights over the selected DGL edge types. Use `--use-etypes` with GTN when you want relation selection over only a subset of relations.
+
 Heterogeneous-only ablation example, without `coauthor`, `paper_to_paper`, or `venue_to_venue` in message passing:
 
 ```bash
@@ -247,12 +264,13 @@ Each metapath must be type-continuous: the destination node type of one edge typ
 --graph-index             Graph index inside the .bin file. Default: 0.
 --target-etype            Target edge type for link prediction.
 --feat-key                Node feature key. Default: feat.
---model                   mcce, han, hgt, rgcn, magnn, or hetgnn.
+--model                   mcce, han, hgt, rgcn, magnn, hetgnn, or gtn.
 --gnn-layers              Number of encoder layers for MCCE/RGCN/HGT.
 --num-heads               Number of attention heads for HAN/HGT/MAGNN.
 --metapath-length         Maximum length for automatic metapath enumeration.
 --metapath-closure        closed, open, or both.
 --magnn-rnn-type           MAGNN sequence encoder: gru, lstm, linear, or average.
+--gtn-channels             Number of soft relation-selection channels for GTN.
 --number-layers           Number of stacked MECCH-style context layers.
 --context-encoder         mean or attention.
 --metapath-fusion         mean, weight, conv, or cat.

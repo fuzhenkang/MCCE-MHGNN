@@ -236,7 +236,7 @@ def main():
     parser.add_argument("--graph-index", type=int, default=0)
     parser.add_argument("--target-etype", type=str, default=None, help="Canonical etype as src:rel:dst, or a unique relation name.")
     parser.add_argument("--feat-key", type=str, default="feat")
-    parser.add_argument("--model", type=str, default="mcce", choices=["mcce", "han", "hgt", "rgcn", "magnn", "hetgnn"])
+    parser.add_argument("--model", type=str, default="mcce", choices=["mcce", "han", "hgt", "rgcn", "magnn", "hetgnn", "gtn"])
     parser.add_argument("--no-cuda", action="store_true", default=False)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--epochs", type=int, default=200)
@@ -247,6 +247,7 @@ def main():
     parser.add_argument("--num-heads", type=int, default=4, help="Attention heads for HAN/HGT baselines.")
     parser.add_argument("--num-bases", type=int, default=-1, help="Reserved for RGCN compatibility.")
     parser.add_argument("--magnn-rnn-type", type=str, default="gru", choices=["gru", "lstm", "linear", "average"], help="Metapath sequence encoder for MAGNN.")
+    parser.add_argument("--gtn-channels", type=int, default=2, help="Number of soft relation channels for GTN.")
     parser.add_argument("--dropout", type=float, default=0.5)
     parser.add_argument("--target-message-graph", type=str, default="train", choices=["train", "full"])
     parser.add_argument("--use-etypes", type=str, default=None, help="Comma-separated message-passing edge types to keep, as rel or src:rel:dst.")
@@ -333,6 +334,7 @@ def main():
             num_heads=args.num_heads,
             num_bases=args.num_bases,
             magnn_rnn_type=args.magnn_rnn_type,
+            gtn_channels=args.gtn_channels,
         )
     model = MCCE_MHGCNLinkPredictor(
         encoder,
