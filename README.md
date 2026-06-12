@@ -30,7 +30,7 @@ pip install -r requirements.txt
 DGL .bin heterograph
   -> read node features from graph.ndata[feat]
   -> read train/valid/test splits from target edge masks
-  -> choose encoder: MCCE-MHGCN, HAN, HGT, or RGCN
+  -> choose encoder: MCCE-MHGCN, HAN, HGT, RGCN, MAGNN, or HetGNN
   -> DistMult / dot / MLP target-edge link prediction
   -> dynamic negative sampling
   -> positive-negative logsigmoid loss
@@ -126,6 +126,8 @@ The training script supports:
 --model han     HAN metapath-reachable GAT plus semantic attention
 --model hgt     HGT heterogeneous attention over all canonical edge types
 --model rgcn    RGCN HeteroGraphConv over all canonical edge types
+--model magnn   MAGNN-style metapath instance encoding plus attention
+--model hetgnn  HetGNN-style heterogeneous neighbor aggregation plus type attention
 ```
 
 All baselines use the same target link predictor selected by `--predictor`, so you can compare them under the same DistMult, dot-product, or MLP scoring setting.
@@ -174,6 +176,36 @@ python Train_Evaluate.py \
 
 For HAN, `--hidden-dim` must be divisible by `--num-heads`, and the metapaths should be closed, such as `author-paper-author` or `author-venue-author`.
 
+MAGNN example for the `author/paper/venue` graph:
+
+```bash
+python Train_Evaluate.py \
+  --graph-bin data/graph.bin \
+  --target-etype author:coauthor:author \
+  --model magnn \
+  --num-heads 4 \
+  --magnn-rnn-type gru \
+  --predictor distmult \
+  --hidden-dim 128 \
+  --metapaths author:coauthor:author,author:author_to_paper:paper>paper:paper_to_author:author,author:author_to_venue:venue>venue:venue_to_author:author \
+  --epochs 200
+```
+
+HetGNN example:
+
+```bash
+python Train_Evaluate.py \
+  --graph-bin data/graph.bin \
+  --target-etype author:coauthor:author \
+  --model hetgnn \
+  --predictor distmult \
+  --hidden-dim 128 \
+  --gnn-layers 2 \
+  --epochs 200
+```
+
+MAGNN uses closed metapaths and `--hidden-dim` must be divisible by `--num-heads`. HetGNN uses typed neighbors from the full DGL heterograph and does not require explicit metapaths.
+
 ## Metapaths
 
 By default, metapaths are automatically enumerated from DGL `canonical_etypes` up to `--metapath-length`.
@@ -199,11 +231,12 @@ Each metapath must be type-continuous: the destination node type of one edge typ
 --graph-index             Graph index inside the .bin file. Default: 0.
 --target-etype            Target edge type for link prediction.
 --feat-key                Node feature key. Default: feat.
---model                   mcce, han, hgt, or rgcn.
+--model                   mcce, han, hgt, rgcn, magnn, or hetgnn.
 --gnn-layers              Number of encoder layers for MCCE/RGCN/HGT.
---num-heads               Number of attention heads for HAN/HGT.
+--num-heads               Number of attention heads for HAN/HGT/MAGNN.
 --metapath-length         Maximum length for automatic metapath enumeration.
 --metapath-closure        closed, open, or both.
+--magnn-rnn-type           MAGNN sequence encoder: gru, lstm, linear, or average.
 --number-layers           Number of stacked MECCH-style context layers.
 --context-encoder         mean or attention.
 --metapath-fusion         mean, weight, conv, or cat.
