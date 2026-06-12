@@ -22,9 +22,9 @@ Install a DGL build compatible with your PyTorch 2.3.0 and CUDA environment.
 pip install -r requirements.txt
 ```
 
-## Unified Entry
+## Training Entrypoints
 
-Use `Link_Prediction.py` as the unified training entry for MCCE-MHGCN and all baselines:
+Use `Link_Prediction.py` as the unified link prediction entry for MCCE-MHGCN and all baselines:
 
 ```bash
 python Link_Prediction.py \
@@ -34,6 +34,15 @@ python Link_Prediction.py \
 ```
 
 `Train_Evaluate.py` contains shared helper functions and is kept for compatibility. New training commands should use `Link_Prediction.py`.
+
+Use `Node_Classification.py` for node classification:
+
+```bash
+python Node_Classification.py \
+  --graph-bin data/graph.bin \
+  --target-ntype author \
+  --model hgt
+```
 
 ## Code Layout
 
@@ -80,6 +89,15 @@ g.edges[target_etype].data["test_mask"]
 
 The masks define positive edges. Negative edges are sampled dynamically from node pairs that do not appear in the full target relation.
 
+For node classification, the target node type must contain:
+
+```text
+g.nodes[target_ntype].data["label"]
+g.nodes[target_ntype].data["train_mask"]
+g.nodes[target_ntype].data["val_mask"] or g.nodes[target_ntype].data["valid_mask"]
+g.nodes[target_ntype].data["test_mask"]
+```
+
 ## Supported Models
 
 ```text
@@ -105,7 +123,11 @@ outputs/<run_name>_metrics.csv
 outputs/<run_name>_summary.json
 ```
 
-The CSV records `epoch`, `split`, `loss`, `auc`, `pr_auc`, and `f1` for train, validation, and final test rows. Use `--output-dir` to choose another directory and `--run-name` to set the file prefix.
+For link prediction, the CSV records `epoch`, `split`, `loss`, `auc`, `pr_auc`, and `f1`.
+
+For node classification, the CSV records `epoch`, `split`, `loss`, `accuracy`, `macro_f1`, and `micro_f1`.
+
+Use `--output-dir` to choose another directory and `--run-name` to set the file prefix.
 
 ## Examples
 
@@ -213,6 +235,25 @@ python Link_Prediction.py \
   --log-every 10
 ```
 
+Node classification:
+
+```bash
+python Node_Classification.py \
+  --graph-bin data/graph.bin \
+  --target-ntype author \
+  --model hgt \
+  --num-heads 4 \
+  --hidden-dim 128 \
+  --gnn-layers 2 \
+  --classifier mlp \
+  --classifier-hidden-dim 128 \
+  --classifier-dropout 0.1 \
+  --epochs 200 \
+  --patience 20 \
+  --early-stop-metric macro_f1 \
+  --log-every 10
+```
+
 ## Relation Selection
 
 `--target-message-graph train` removes validation/test target edges from message passing. Use `--target-message-graph full` only for ablation.
@@ -254,4 +295,15 @@ python Link_Prediction.py \
 --negative-ratio          Number of sampled negatives per positive edge.
 --output-dir              Directory for saved metric CSV and summary JSON files. Default: outputs.
 --run-name                Optional file name prefix for saved outputs.
+```
+
+Node classification also supports:
+
+```text
+--target-ntype            Target node type for classification.
+--label-key               Node label key. Default: label.
+--classifier              linear or mlp.
+--classifier-hidden-dim   Hidden dimension for the MLP classifier.
+--classifier-dropout      Dropout for the MLP classifier.
+--early-stop-metric       loss, accuracy, macro_f1, or micro_f1.
 ```
