@@ -128,6 +128,43 @@ def remove_non_train_target_edges(graph, etype, train_mask):
     return dgl.remove_edges(graph, remove_eids, etype=etype)
 
 
+def parse_use_etypes(spec, graph):
+    if not spec:
+        return None
+    relation_to_etypes = {}
+    for etype in graph.canonical_etypes:
+        relation_to_etypes.setdefault(etype[1], []).append(etype)
+    selected = []
+    for raw in spec.split(","):
+        token = raw.strip()
+        if not token:
+            continue
+        parts = [part.strip() for part in token.split(":") if part.strip()]
+        if len(parts) == 3:
+            etype = tuple(parts)
+            if etype not in graph.canonical_etypes:
+                raise ValueError("--use-etypes contains unknown canonical etype {}".format(etype))
+            selected.append(etype)
+        elif len(parts) == 1:
+            matches = relation_to_etypes.get(parts[0], [])
+            if not matches:
+                raise ValueError("--use-etypes contains unknown relation '{}'".format(parts[0]))
+            selected.extend(matches)
+        else:
+            raise ValueError("--use-etypes token '{}' must be rel or src:rel:dst".format(token))
+    selected = sorted(set(selected), key=graph.canonical_etypes.index)
+    if not selected:
+        raise ValueError("--use-etypes did not select any edge types")
+    return selected
+
+
+def filter_message_graph_etypes(graph, use_etypes):
+    if use_etypes is None:
+        return graph
+    import dgl
+    return dgl.edge_type_subgraph(graph, use_etypes)
+
+
 def link_loss(scores, labels):
     labels = labels.float()
     pos_scores = scores[labels == 1]
@@ -212,6 +249,7 @@ def main():
     parser.add_argument("--magnn-rnn-type", type=str, default="gru", choices=["gru", "lstm", "linear", "average"], help="Metapath sequence encoder for MAGNN.")
     parser.add_argument("--dropout", type=float, default=0.5)
     parser.add_argument("--target-message-graph", type=str, default="train", choices=["train", "full"])
+    parser.add_argument("--use-etypes", type=str, default=None, help="Comma-separated message-passing edge types to keep, as rel or src:rel:dst.")
     parser.add_argument("--negative-ratio", type=float, default=1.0)
     parser.add_argument("--no-gate", action="store_true", default=False)
     parser.add_argument("--log-every", type=int, default=10)
@@ -248,6 +286,10 @@ def main():
         print("Message graph uses only train_mask positives for {}.".format(canonical_etype_to_text(target_etype)))
     else:
         print("Message graph uses the full target relation.")
+    use_etypes = parse_use_etypes(args.use_etypes, message_graph)
+    if use_etypes is not None:
+        message_graph = filter_message_graph_etypes(message_graph, use_etypes)
+        print("Message graph keeps etypes: {}".format(", ".join(canonical_etype_to_text(etype) for etype in use_etypes)))
     message_graph = message_graph.to(device)
     features, input_dims = get_node_features(message_graph, args.feat_key)
     features = {ntype: feat.to(device) for ntype, feat in features.items()}

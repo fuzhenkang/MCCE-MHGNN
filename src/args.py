@@ -22,6 +22,7 @@ def get_static_args():
     parser.add_argument("--magnn-rnn-type", type=str, default="gru", choices=["gru", "lstm", "linear", "average"])
     parser.add_argument("--dropout", type=float, default=0.5)
     parser.add_argument("--target-message-graph", type=str, default="train", choices=["train", "full"])
+    parser.add_argument("--use-etypes", type=str, default=None)
     parser.add_argument("--negative-ratio", type=float, default=1.0)
     parser.add_argument("--no-gate", action="store_true", default=False)
     parser.add_argument("--log-every", type=int, default=10)

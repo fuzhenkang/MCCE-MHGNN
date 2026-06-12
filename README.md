@@ -117,6 +117,8 @@ python Train_Evaluate.py \
 
 `--target-message-graph train` removes non-training target edges from message passing, reducing validation/test leakage. `--target-message-graph full` keeps all target edges for ablation.
 
+Use `--use-etypes` when you want the encoder to see only selected relation types during message passing. This does not change the original target-edge masks or the negative sampling graph.
+
 ## Baselines
 
 The training script supports:
@@ -206,6 +208,20 @@ python Train_Evaluate.py \
 
 MAGNN uses closed metapaths and `--hidden-dim` must be divisible by `--num-heads`. HetGNN uses typed neighbors from the full DGL heterograph and does not require explicit metapaths.
 
+Heterogeneous-only ablation example, without `coauthor`, `paper_to_paper`, or `venue_to_venue` in message passing:
+
+```bash
+python Train_Evaluate.py \
+  --graph-bin data/graph.bin \
+  --target-etype author:coauthor:author \
+  --model hgt \
+  --use-etypes author_to_paper,paper_to_author,author_to_venue,venue_to_author,paper_to_venue,venue_to_paper \
+  --predictor distmult \
+  --hidden-dim 128 \
+  --gnn-layers 2 \
+  --epochs 200
+```
+
 ## Metapaths
 
 By default, metapaths are automatically enumerated from DGL `canonical_etypes` up to `--metapath-length`.
@@ -243,5 +259,6 @@ Each metapath must be type-continuous: the destination node type of one edge typ
 --fusion-mode             intra, context, or both.
 --predictor               distmult, dot, or mlp.
 --target-message-graph    train or full.
+--use-etypes              Edge types kept in the message graph, as rel or src:rel:dst.
 --negative-ratio          Number of sampled negatives per positive edge.
 ```
