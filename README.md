@@ -11,8 +11,6 @@ cd MCCE-MHGNN
 
 ## Environment
 
-The intended runtime is:
-
 ```text
 PyTorch == 2.3.0
 DGL >= 2.1.0
@@ -24,24 +22,22 @@ Install a DGL build compatible with your PyTorch 2.3.0 and CUDA environment.
 pip install -r requirements.txt
 ```
 
-## Architecture
+## Unified Entry
 
-```text
-DGL .bin heterograph
-  -> read node features from graph.ndata[feat]
-  -> read train/valid/test splits from target edge masks
-  -> choose encoder: MCCE-MHGCN, HAN, HGT, RGCN, MAGNN, HetGNN, or GTN
-  -> DistMult / dot / MLP target-edge link prediction
-  -> dynamic negative sampling
-  -> positive-negative logsigmoid loss
-  -> validation/test AUC, PR-AUC, F1
+Use `Link_Prediction.py` as the unified training entry for MCCE-MHGCN and all baselines:
+
+```bash
+python Link_Prediction.py \
+  --graph-bin data/graph.bin \
+  --target-etype author:coauthor:author \
+  --model mcce
 ```
 
-`MCCE-MHGCN` keeps the original multilayer heterogeneous metapath-context encoder. The new baseline encoders in `src/baselines.py` reuse the same data loading, target-edge masks, negative sampling, loss, validation, and test logic.
+`Train_Evaluate.py` contains shared helper functions and is kept for compatibility. New training commands should use `Link_Prediction.py`.
 
 ## Data Format
 
-The model no longer reads `.mat` adjacency matrices or split `.txt` files. Use a DGL graph saved by:
+The model reads a DGL heterograph saved by:
 
 ```python
 import dgl
@@ -49,21 +45,15 @@ import dgl
 dgl.save_graphs("graph.bin", [g])
 ```
 
-The saved graph should be a DGL heterograph.
-
-### Node Data
-
-Every node type used by the model must contain a feature tensor:
+Every node type used by the encoder must have node features:
 
 ```text
-g.nodes[ntype].data["feat"]: shape [num_nodes, feature_dim]
+g.nodes[ntype].data["feat"]
 ```
 
-Use `--feat-key` if the feature key is not `feat`.
+Use `--feat-key` if your feature key is not `feat`.
 
-### Edge Data Masks
-
-The target canonical edge type must contain masks:
+The target canonical edge type must contain split masks:
 
 ```text
 g.edges[target_etype].data["train_mask"]
@@ -71,34 +61,35 @@ g.edges[target_etype].data["val_mask"] or g.edges[target_etype].data["valid_mask
 g.edges[target_etype].data["test_mask"]
 ```
 
-Masks should be boolean tensors with length equal to the number of edges in the target edge type. These masks define positive edges for each split. Negative edges are sampled dynamically from node pairs that are not present in the full target relation.
+The masks define positive edges. Negative edges are sampled dynamically from node pairs that do not appear in the full target relation.
 
-The target edge type can be provided as:
-
-```text
---target-etype source_type:relation_type:target_type
-```
-
-or as a unique relation name:
+## Supported Models
 
 ```text
---target-etype relation_type
+--model mcce       MCCE-MHGCN encoder
+--model han        HAN metapath-reachable GAT plus semantic attention
+--model magnn      MAGNN-style metapath instance encoding plus attention
+--model hetgnn     HetGNN-style heterogeneous neighbor aggregation
+--model hgt        HGT heterogeneous attention
+--model rgcn       RGCN HeteroGraphConv
+--model gtn        GTN-style soft relation selection
+--model hinormer   HINormer-style local encoder plus relation-aware global attention
+--model simplehgn  SimpleHGN-style edge-type-aware heterogeneous attention
 ```
 
-If omitted, the script uses the first edge type that has `train_mask` plus validation/test masks.
+All models use the same target-edge predictor selected by `--predictor`: `distmult`, `dot`, or `mlp`.
 
-## Training
+## Examples
 
-MCCE-MHGCN example:
+MCCE-MHGCN:
 
 ```bash
-python Train_Evaluate.py \
+python Link_Prediction.py \
   --graph-bin data/graph.bin \
   --target-etype author:coauthor:author \
   --feat-key feat \
   --model mcce \
   --target-message-graph train \
-  --negative-ratio 1.0 \
   --metapath-length 3 \
   --metapath-closure closed \
   --context-model mecch \
@@ -109,153 +100,106 @@ python Train_Evaluate.py \
   --hidden-dim 128 \
   --gnn-layers 2 \
   --number-layers 1 \
+  --negative-ratio 1.0 \
   --epochs 200 \
   --patience 10 \
   --early-stop-metric auc \
   --log-every 10
 ```
 
-`--target-message-graph train` removes non-training target edges from message passing, reducing validation/test leakage. `--target-message-graph full` keeps all target edges for ablation.
-
-Use `--use-etypes` when you want the encoder to see only selected relation types during message passing. This does not change the original target-edge masks or the negative sampling graph.
-
-## Baselines
-
-The training script supports:
-
-```text
---model mcce    MCCE-MHGCN encoder
---model han     HAN metapath-reachable GAT plus semantic attention
---model hgt     HGT heterogeneous attention over all canonical edge types
---model rgcn    RGCN HeteroGraphConv over all canonical edge types
---model magnn   MAGNN-style metapath instance encoding plus attention
---model hetgnn  HetGNN-style heterogeneous neighbor aggregation plus type attention
---model gtn     GTN-style soft relation selection over canonical edge types
-```
-
-All baselines use the same target link predictor selected by `--predictor`, so you can compare them under the same DistMult, dot-product, or MLP scoring setting.
-
-RGCN example:
+HAN:
 
 ```bash
-python Train_Evaluate.py \
+python Link_Prediction.py \
   --graph-bin data/graph.bin \
   --target-etype author:coauthor:author \
-  --model rgcn \
-  --predictor distmult \
+  --model han \
+  --metapaths author:coauthor:author,author:author_to_paper:paper>paper:paper_to_author:author,author:author_to_venue:venue>venue:venue_to_author:author \
+  --num-heads 4 \
   --hidden-dim 128 \
-  --gnn-layers 2 \
+  --predictor distmult \
   --epochs 200 \
   --log-every 10
 ```
 
-HGT example:
+MAGNN:
 
 ```bash
-python Train_Evaluate.py \
+python Link_Prediction.py \
+  --graph-bin data/graph.bin \
+  --target-etype author:coauthor:author \
+  --model magnn \
+  --metapaths author:coauthor:author,author:author_to_paper:paper>paper:paper_to_author:author,author:author_to_venue:venue>venue:venue_to_author:author \
+  --num-heads 4 \
+  --magnn-rnn-type gru \
+  --hidden-dim 128 \
+  --predictor distmult \
+  --epochs 200
+```
+
+HGT/RGCN/GTN/HetGNN do not require explicit metapaths:
+
+```bash
+python Link_Prediction.py \
   --graph-bin data/graph.bin \
   --target-etype author:coauthor:author \
   --model hgt \
   --num-heads 4 \
-  --predictor distmult \
   --hidden-dim 128 \
   --gnn-layers 2 \
+  --predictor distmult \
   --epochs 200
 ```
 
-HAN example for the `author/paper/venue` graph:
+HINormer:
 
 ```bash
-python Train_Evaluate.py \
+python Link_Prediction.py \
   --graph-bin data/graph.bin \
   --target-etype author:coauthor:author \
-  --model han \
+  --model hinormer \
+  --hidden-dim 128 \
+  --gnn-layers 2 \
+  --hinormer-layers 2 \
   --num-heads 4 \
+  --hinormer-beta 1.0 \
   --predictor distmult \
-  --hidden-dim 128 \
-  --metapaths author:coauthor:author,author:author_to_paper:paper>paper:paper_to_author:author,author:author_to_venue:venue>venue:venue_to_author:author,author:author_to_paper:paper>paper:paper_to_paper:paper>paper:paper_to_author:author,author:author_to_venue:venue>venue:venue_to_venue:venue>venue:venue_to_author:author \
-  --epochs 200
+  --epochs 200 \
+  --log-every 10
 ```
 
-For HAN, `--hidden-dim` must be divisible by `--num-heads`, and the metapaths should be closed, such as `author-paper-author` or `author-venue-author`.
-
-MAGNN example for the `author/paper/venue` graph:
+SimpleHGN:
 
 ```bash
-python Train_Evaluate.py \
+python Link_Prediction.py \
   --graph-bin data/graph.bin \
   --target-etype author:coauthor:author \
-  --model magnn \
+  --model simplehgn \
+  --hidden-dim 128 \
+  --gnn-layers 2 \
   --num-heads 4 \
-  --magnn-rnn-type gru \
+  --edge-dim 64 \
+  --simplehgn-beta 0.0 \
   --predictor distmult \
-  --hidden-dim 128 \
-  --metapaths author:coauthor:author,author:author_to_paper:paper>paper:paper_to_author:author,author:author_to_venue:venue>venue:venue_to_author:author \
-  --epochs 200
+  --epochs 200 \
+  --log-every 10
 ```
 
-HetGNN example:
+## Relation Selection
+
+`--target-message-graph train` removes validation/test target edges from message passing. Use `--target-message-graph full` only for ablation.
+
+Use `--use-etypes` to keep only selected message-passing edge types. For example, to remove same-type relations from message passing:
 
 ```bash
-python Train_Evaluate.py \
-  --graph-bin data/graph.bin \
-  --target-etype author:coauthor:author \
-  --model hetgnn \
-  --predictor distmult \
-  --hidden-dim 128 \
-  --gnn-layers 2 \
-  --epochs 200
-```
-
-MAGNN uses closed metapaths and `--hidden-dim` must be divisible by `--num-heads`. HetGNN uses typed neighbors from the full DGL heterograph and does not require explicit metapaths.
-
-GTN example:
-
-```bash
-python Train_Evaluate.py \
-  --graph-bin data/graph.bin \
-  --target-etype author:coauthor:author \
-  --model gtn \
-  --gtn-channels 2 \
-  --predictor distmult \
-  --hidden-dim 128 \
-  --gnn-layers 2 \
-  --epochs 200
-```
-
-GTN learns channel-wise soft weights over the selected DGL edge types. Use `--use-etypes` with GTN when you want relation selection over only a subset of relations.
-
-Heterogeneous-only ablation example, without `coauthor`, `paper_to_paper`, or `venue_to_venue` in message passing:
-
-```bash
-python Train_Evaluate.py \
+python Link_Prediction.py \
   --graph-bin data/graph.bin \
   --target-etype author:coauthor:author \
   --model hgt \
   --use-etypes author_to_paper,paper_to_author,author_to_venue,venue_to_author,paper_to_venue,venue_to_paper \
-  --predictor distmult \
   --hidden-dim 128 \
-  --gnn-layers 2 \
-  --epochs 200
+  --gnn-layers 2
 ```
-
-## Metapaths
-
-By default, metapaths are automatically enumerated from DGL `canonical_etypes` up to `--metapath-length`.
-
-You can also pass explicit metapaths:
-
-```bash
---metapaths writes>written_by,affiliated_with>has_member
-```
-
-or with canonical edge types:
-
-```bash
---metapaths author:writes:paper>paper:written_by:author,author:affiliated_with:org>org:has_member:author
-```
-
-Each metapath must be type-continuous: the destination node type of one edge type must equal the source node type of the next edge type.
 
 ## Important Parameters
 
@@ -264,17 +208,18 @@ Each metapath must be type-continuous: the destination node type of one edge typ
 --graph-index             Graph index inside the .bin file. Default: 0.
 --target-etype            Target edge type for link prediction.
 --feat-key                Node feature key. Default: feat.
---model                   mcce, han, hgt, rgcn, magnn, hetgnn, or gtn.
---gnn-layers              Number of encoder layers for MCCE/RGCN/HGT.
---num-heads               Number of attention heads for HAN/HGT/MAGNN.
---metapath-length         Maximum length for automatic metapath enumeration.
+--model                   mcce, han, hgt, rgcn, magnn, hetgnn, gtn, hinormer, or simplehgn.
+--gnn-layers              Encoder layer count.
+--num-heads               Attention heads for attention-based models.
+--metapaths               Explicit metapaths for MCCE/HAN/MAGNN.
+--metapath-length         Maximum automatic metapath length.
 --metapath-closure        closed, open, or both.
---magnn-rnn-type           MAGNN sequence encoder: gru, lstm, linear, or average.
---gtn-channels             Number of soft relation-selection channels for GTN.
---number-layers           Number of stacked MECCH-style context layers.
---context-encoder         mean or attention.
---metapath-fusion         mean, weight, conv, or cat.
---fusion-mode             intra, context, or both.
+--magnn-rnn-type          MAGNN sequence encoder: gru, lstm, linear, or average.
+--gtn-channels            Number of soft relation-selection channels for GTN.
+--hinormer-layers         HINormer global attention layer count.
+--hinormer-beta           Relation-bias weight for HINormer attention.
+--edge-dim                Edge-type embedding dimension for SimpleHGN.
+--simplehgn-beta          Edge-attention residual weight for SimpleHGN.
 --predictor               distmult, dot, or mlp.
 --target-message-graph    train or full.
 --use-etypes              Edge types kept in the message graph, as rel or src:rel:dst.
