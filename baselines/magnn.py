@@ -39,7 +39,7 @@ class MAGNNMetapathLayer(nn.Module):
     def reset_parameters(self):
         nn.init.xavier_normal_(self.relation_embeddings, gain=1.414)
         nn.init.xavier_normal_(self.attn, gain=1.414)
-        if isinstance(self.sequence_encoder, nn.Linear):
+        if hasattr(self, "sequence_encoder") and isinstance(self.sequence_encoder, nn.Linear):
             nn.init.xavier_normal_(self.sequence_encoder.weight, gain=1.414)
 
     def _encode_sequence(self, src_h, dst_h):
