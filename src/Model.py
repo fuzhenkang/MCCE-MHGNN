@@ -1,4 +1,4 @@
-import math
+﻿import math
 import sys
 import types
 
@@ -157,7 +157,7 @@ class MetapathContextEncoder(nn.Module):
 
 class MCCE_MHGCN(nn.Module):
     def __init__(self, graph, input_dims, hidden_dim, gnn_layers=2, dropout=0.5, use_gate=True,
-                 metapaths=None, metapath_fusion="conv", context_encoder="mean", context_use_v=False,
+                 metapaths=None, metapath_fusion="conv", context_encoder="gcn", context_use_v=False,
                  context_heads=8, number_layers=1, fusion_mode="both", context_model="mecch"):
         super().__init__()
         if context_model != "mecch":
@@ -301,3 +301,4 @@ class MCCE_MHGCNLinkPredictor(nn.Module):
     def forward(self, graph, features, edge_index):
         embeddings = self.encoder(graph, features)
         return self.score_edges(embeddings, edge_index)
+
