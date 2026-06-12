@@ -124,7 +124,7 @@ def build_parser():
     parser.add_argument("--metapath-fusion", type=str, default="conv", choices=["mean", "weight", "conv", "cat"])
     parser.add_argument("--fusion-mode", type=str, default="both", choices=["intra", "context", "both"])
     parser.add_argument("--context-model", type=str, default="mecch", choices=["mecch"])
-    parser.add_argument("--context-encoder", type=str, default="mean", choices=["mean", "attention"])
+    parser.add_argument("--context-encoder", type=str, default="gcn", choices=["gcn", "conv", "mean", "attention"], help="Cross-layer semantic encoder: gcn/conv for metapath context subgraph convolution, or attention.")
     parser.add_argument("--context-use-v", action="store_true", default=False)
     parser.add_argument("--context-heads", type=int, default=8)
     parser.add_argument("--classifier", type=str, default="linear", choices=["linear", "mlp"])

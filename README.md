@@ -114,6 +114,8 @@ g.nodes[target_ntype].data["test_mask"]
 
 All models use the same target-edge predictor selected by `--predictor`: `distmult`, `dot`, or `mlp`.
 
+MCCE context metapaths use only heterogeneous edges. Metapaths containing same-type relations, such as `author:coauthor:author`, are ignored by the cross-layer context encoder, while same-type relations can still be used by the intra-layer encoder. Choose the cross-layer semantic encoder with `--context-encoder gcn` for metapath context subgraph convolution or `--context-encoder attention` for attention-based aggregation.
+
 ## Outputs
 
 Every training run saves metrics under `outputs/` by default:
@@ -143,7 +145,7 @@ python Link_Prediction.py \
   --metapath-length 3 \
   --metapath-closure closed \
   --context-model mecch \
-  --context-encoder mean \
+  --context-encoder gcn \
   --metapath-fusion conv \
   --fusion-mode both \
   --predictor distmult \
