@@ -1,4 +1,9 @@
 import argparse
+import csv
+import json
+import os
+import re
+import time
 
 import numpy as np
 import torch
@@ -17,9 +22,7 @@ from Train_Evaluate import (
 )
 from src.Model import MCCE_MHGCN, MCCE_MHGCNLinkPredictor
 from src.Utils import get_edge_mask, get_node_features, load_dgl_bin_graph, parse_canonical_etype
-from src.baselines import build_baseline_encoder
-from src.hinormer import HINormerEncoder
-from src.simplehgn import SimpleHGNEncoder
+from baselines import build_baseline_encoder
 
 
 def build_parser():
@@ -71,6 +74,8 @@ def build_parser():
     parser.add_argument("--predictor", type=str, default="distmult", choices=["distmult", "dot", "mlp"])
     parser.add_argument("--predictor-hidden-dim", type=int, default=None)
     parser.add_argument("--predictor-dropout", type=float, default=0.0)
+    parser.add_argument("--output-dir", type=str, default="outputs", help="Directory used to save metric CSV and summary JSON files.")
+    parser.add_argument("--run-name", type=str, default=None, help="Optional file name prefix for saved outputs.")
     return parser
 
 
@@ -92,29 +97,6 @@ def build_encoder(args, graph, input_dims, metapaths, target_etype):
             fusion_mode=args.fusion_mode,
             context_model=args.context_model,
         )
-    if args.model == "hinormer":
-        return HINormerEncoder(
-            graph,
-            input_dims=input_dims,
-            hidden_dim=args.hidden_dim,
-            num_local_layers=args.gnn_layers,
-            num_transformer_layers=args.hinormer_layers,
-            num_heads=args.num_heads,
-            dropout=args.dropout,
-            beta=args.hinormer_beta,
-        )
-    if args.model == "simplehgn":
-        return SimpleHGNEncoder(
-            graph,
-            input_dims=input_dims,
-            hidden_dim=args.hidden_dim,
-            num_layers=args.gnn_layers,
-            num_heads=args.num_heads,
-            edge_dim=args.edge_dim,
-            dropout=args.dropout,
-            negative_slope=args.slope,
-            beta=args.simplehgn_beta,
-        )
     return build_baseline_encoder(
         args.model,
         graph,
@@ -128,8 +110,55 @@ def build_encoder(args, graph, input_dims, metapaths, target_etype):
         num_bases=args.num_bases,
         magnn_rnn_type=args.magnn_rnn_type,
         gtn_channels=args.gtn_channels,
+        hinormer_layers=args.hinormer_layers,
+        hinormer_beta=args.hinormer_beta,
+        edge_dim=args.edge_dim,
+        slope=args.slope,
+        simplehgn_beta=args.simplehgn_beta,
     )
 
+
+def _metric_record(epoch, split, metrics):
+    return {
+        "epoch": epoch,
+        "split": split,
+        "loss": metrics.get("loss"),
+        "auc": metrics.get("auc"),
+        "pr_auc": metrics.get("pr_auc"),
+        "f1": metrics.get("f1"),
+    }
+
+
+def _safe_run_name(value):
+    value = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_")
+    return value or "run"
+
+
+def save_outputs(args, target_etype, records, best_valid_score, test_metrics):
+    os.makedirs(args.output_dir, exist_ok=True)
+    target_text = canonical_etype_to_text(target_etype).replace(":", "-")
+    run_name = args.run_name or "{}_{}_{}".format(time.strftime("%Y%m%d_%H%M%S"), args.model, target_text)
+    run_name = _safe_run_name(run_name)
+    metrics_path = os.path.join(args.output_dir, run_name + "_metrics.csv")
+    summary_path = os.path.join(args.output_dir, run_name + "_summary.json")
+
+    with open(metrics_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["epoch", "split", "loss", "auc", "pr_auc", "f1"])
+        writer.writeheader()
+        writer.writerows(records)
+
+    summary = {
+        "model": args.model,
+        "target_etype": canonical_etype_to_text(target_etype),
+        "best_valid_{}".format(args.early_stop_metric): best_valid_score,
+        "test": {key: test_metrics.get(key) for key in ["loss", "auc", "pr_auc", "f1"]},
+        "args": vars(args),
+        "metrics_csv": metrics_path,
+    }
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2, sort_keys=True)
+    print("Saved metrics to {}".format(metrics_path))
+    print("Saved summary to {}".format(summary_path))
 
 def main():
     args = build_parser().parse_args()
@@ -186,6 +215,7 @@ def main():
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
+    metric_records = []
     best_state = None
     best_valid_score = -float("inf")
     patience_counter = 0
@@ -196,6 +226,7 @@ def main():
         train_metrics = run_batch(
             model, message_graph, features, train_edges, train_labels, device, train=True, optimizer=optimizer
         )
+        metric_records.append(_metric_record(epoch, "train", train_metrics))
         if epoch % args.log_every == 0 or epoch == 1:
             print(format_metrics("Epoch {:04d} train".format(epoch), train_metrics))
 
@@ -204,6 +235,7 @@ def main():
                 raw_graph, target_etype, valid_mask, args.negative_ratio, seed=args.seed + 100000 + epoch
             )
             valid_metrics = run_batch(model, message_graph, features, valid_edges, valid_labels, device)
+            metric_records.append(_metric_record(epoch, "valid", valid_metrics))
             print(format_metrics("Epoch {:04d} valid".format(epoch), valid_metrics))
             valid_score = valid_metrics.get(args.early_stop_metric, float("nan"))
             if np.isfinite(valid_score) and valid_score > best_valid_score:
@@ -222,7 +254,9 @@ def main():
         raw_graph, target_etype, test_mask, args.negative_ratio, seed=args.seed + 200000
     )
     test_metrics = run_batch(model, message_graph, features, test_edges, test_labels, device)
+    metric_records.append(_metric_record("final", "test", test_metrics))
     print(format_metrics("test", test_metrics))
+    save_outputs(args, target_etype, metric_records, best_valid_score, test_metrics)
 
 
 if __name__ == "__main__":

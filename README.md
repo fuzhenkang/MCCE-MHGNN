@@ -35,6 +35,23 @@ python Link_Prediction.py \
 
 `Train_Evaluate.py` contains shared helper functions and is kept for compatibility. New training commands should use `Link_Prediction.py`.
 
+## Code Layout
+
+Baseline model implementations are organized as independent files under `baselines/`:
+
+```text
+baselines/han.py
+baselines/magnn.py
+baselines/hetgnn.py
+baselines/hgt.py
+baselines/rgcn.py
+baselines/gtn.py
+baselines/hinormer.py
+baselines/simplehgn.py
+```
+
+`baselines/__init__.py` only exports the encoders and the baseline factory used by `Link_Prediction.py`.
+
 ## Data Format
 
 The model reads a DGL heterograph saved by:
@@ -78,6 +95,17 @@ The masks define positive edges. Negative edges are sampled dynamically from nod
 ```
 
 All models use the same target-edge predictor selected by `--predictor`: `distmult`, `dot`, or `mlp`.
+
+## Outputs
+
+Every training run saves metrics under `outputs/` by default:
+
+```text
+outputs/<run_name>_metrics.csv
+outputs/<run_name>_summary.json
+```
+
+The CSV records `epoch`, `split`, `loss`, `auc`, `pr_auc`, and `f1` for train, validation, and final test rows. Use `--output-dir` to choose another directory and `--run-name` to set the file prefix.
 
 ## Examples
 
@@ -224,4 +252,6 @@ python Link_Prediction.py \
 --target-message-graph    train or full.
 --use-etypes              Edge types kept in the message graph, as rel or src:rel:dst.
 --negative-ratio          Number of sampled negatives per positive edge.
+--output-dir              Directory for saved metric CSV and summary JSON files. Default: outputs.
+--run-name                Optional file name prefix for saved outputs.
 ```

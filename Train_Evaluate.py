@@ -7,7 +7,7 @@ from sklearn.metrics import auc, f1_score, precision_recall_curve
 
 from src.Model import MCCE_MHGCN, MCCE_MHGCNLinkPredictor
 from src.Utils import get_edge_mask, get_node_features, load_dgl_bin_graph, parse_canonical_etype
-from src.baselines import build_baseline_encoder
+from baselines import build_baseline_encoder
 
 
 def canonical_etype_to_text(etype):
