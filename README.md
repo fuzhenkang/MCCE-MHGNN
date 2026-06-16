@@ -114,7 +114,7 @@ g.nodes[target_ntype].data["test_mask"]
 
 All models use the same target-edge predictor selected by `--predictor`: `distmult`, `dot`, or `mlp`.
 
-MCCE context metapaths use only heterogeneous edges. Metapaths containing same-type relations, such as `author:coauthor:author`, are ignored by the cross-layer context encoder, while same-type relations can still be used by the intra-layer encoder. Choose the cross-layer semantic encoder with `--context-encoder gcn` for metapath context subgraph convolution or `--context-encoder attention` for attention-based aggregation.
+MCCE context metapaths use only heterogeneous edges. Metapaths containing same-type relations, such as `author:coauthor:author`, are ignored by the cross-layer context encoder, while same-type relations can still be used by the intra-layer encoder. The intra-layer same-type network is encoded with GraphSAGE; choose its neighbor aggregation with `--sage-aggregator-type mean|pool|lstm|gcn`, set its layer count with `--gnn-layers`, and optionally add `--sage-normalize` to L2-normalize its outputs. Choose the cross-layer semantic encoder with `--context-encoder gcn` for metapath context subgraph convolution or `--context-encoder attention` for attention-based aggregation.
 
 ## Outputs
 
@@ -151,6 +151,7 @@ python Link_Prediction.py \
   --predictor distmult \
   --hidden-dim 128 \
   --gnn-layers 2 \
+  --sage-aggregator-type mean \
   --number-layers 1 \
   --negative-ratio 1.0 \
   --epochs 200 \
@@ -280,7 +281,9 @@ python Link_Prediction.py \
 --target-etype            Target edge type for link prediction.
 --feat-key                Node feature key. Default: feat.
 --model                   mcce, han, hgt, rgcn, magnn, hetgnn, gtn, hinormer, or simplehgn.
---gnn-layers              Encoder layer count.
+--gnn-layers              Encoder layer count. For MCCE, this is the GraphSAGE intra-layer layer count.
+--sage-aggregator-type    MCCE intra-layer GraphSAGE aggregator: mean, pool, lstm, or gcn.
+--sage-normalize          L2-normalize MCCE intra-layer GraphSAGE outputs.
 --num-heads               Attention heads for attention-based models.
 --metapaths               Explicit metapaths for MCCE/HAN/MAGNN.
 --metapath-length         Maximum automatic metapath length.

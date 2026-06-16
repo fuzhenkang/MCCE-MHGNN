@@ -101,6 +101,8 @@ def build_parser():
     parser.add_argument("--weight-decay", type=float, default=5e-6)
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument("--gnn-layers", type=int, default=2)
+    parser.add_argument("--sage-aggregator-type", type=str, default="mean", choices=["mean", "pool", "lstm", "gcn"], help="GraphSAGE aggregator used by the MCCE intra-layer same-type encoder.")
+    parser.add_argument("--sage-normalize", action="store_true", default=False, help="L2-normalize GraphSAGE intra-layer outputs.")
     parser.add_argument("--num-heads", type=int, default=4)
     parser.add_argument("--num-bases", type=int, default=-1, help="Reserved for RGCN compatibility.")
     parser.add_argument("--magnn-rnn-type", type=str, default="gru", choices=["gru", "lstm", "linear", "average"])
@@ -152,6 +154,8 @@ def build_encoder(args, graph, input_dims, metapaths):
             number_layers=args.number_layers,
             fusion_mode=args.fusion_mode,
             context_model=args.context_model,
+            sage_aggregator_type=args.sage_aggregator_type,
+            sage_normalize=args.sage_normalize,
         )
     return build_baseline_encoder(
         args.model,

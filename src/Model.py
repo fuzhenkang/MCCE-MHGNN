@@ -27,26 +27,65 @@ def _metapath_key(metapath):
     return "||".join(_etype_key(etype) for etype in metapath)
 
 
-class DGLGraphConvolution(nn.Module):
-    def __init__(self, in_dim, out_dim):
+class DGLGraphSAGELayer(nn.Module):
+    def __init__(self, in_dim, out_dim, aggregator_type="mean", activation=F.relu, dropout=0.0, normalize=False):
         super().__init__()
-        self.linear = nn.Linear(in_dim, out_dim)
+        if aggregator_type not in {"mean", "pool", "lstm", "gcn"}:
+            raise ValueError("aggregator_type must be one of mean, pool, lstm, or gcn")
+        self.aggregator_type = aggregator_type
+        self.activation = activation
+        self.dropout = dropout
+        self.normalize = normalize
+        self.fc_self = nn.Linear(in_dim, out_dim)
+        self.fc_neigh = nn.Linear(in_dim, out_dim)
+        self.fc_gcn = nn.Linear(in_dim, out_dim)
+        if aggregator_type == "pool":
+            self.fc_pool = nn.Linear(in_dim, in_dim)
+        if aggregator_type == "lstm":
+            self.lstm = nn.LSTM(in_dim, in_dim, batch_first=True)
+
+    def _relation_aggregate(self, graph, ntype, etype, features, message_features, reducer):
+        import dgl.function as fn
+
+        with graph.local_scope():
+            graph.nodes[ntype].data["h_sage_src"] = message_features
+            reduce_func = fn.max("m", "h_sage_neigh") if reducer == "max" else fn.mean("m", "h_sage_neigh")
+            graph.update_all(fn.copy_u("h_sage_src", "m"), reduce_func, etype=etype)
+            return graph.nodes[ntype].data.get("h_sage_neigh", features.new_zeros(features.shape))
+
+    def _aggregate_neighbors(self, graph, ntype, etypes, features):
+        if not etypes:
+            return features.new_zeros(features.shape)
+
+        if self.aggregator_type == "pool":
+            message_features = F.relu(self.fc_pool(features))
+            reducer = "max"
+        else:
+            message_features = features
+            reducer = "mean"
+
+        relation_outputs = [
+            self._relation_aggregate(graph, ntype, etype, features, message_features, reducer)
+            for etype in etypes
+        ]
+        if self.aggregator_type == "lstm":
+            sequence = torch.stack(relation_outputs, dim=1)
+            _out, (hidden, _cell) = self.lstm(sequence)
+            return hidden[-1]
+        return torch.mean(torch.stack(relation_outputs), dim=0)
 
     def forward(self, graph, ntype, etypes, features):
-        import dgl.function as fn
-        h = self.linear(features.float())
-        if not etypes:
-            return h
-        funcs = {}
-        with graph.local_scope():
-            graph.nodes[ntype].data["h_gcn"] = h
-            for etype in etypes:
-                if "norm" in graph.edges[etype].data:
-                    funcs[etype] = (fn.u_mul_e("h_gcn", "norm", "m"), fn.sum("m", "h_out"))
-                else:
-                    funcs[etype] = (fn.copy_u("h_gcn", "m"), fn.mean("m", "h_out"))
-            graph.multi_update_all(funcs, "sum")
-            return graph.nodes[ntype].data.get("h_out", h)
+        features = features.float()
+        neigh = self._aggregate_neighbors(graph, ntype, etypes, features)
+        if self.aggregator_type == "gcn":
+            h = self.fc_gcn((features + neigh) * 0.5)
+        else:
+            h = self.fc_self(features) + self.fc_neigh(neigh)
+        if self.activation is not None:
+            h = self.activation(h)
+        if self.normalize:
+            h = F.normalize(h, p=2, dim=1)
+        return F.dropout(h, self.dropout, training=self.training)
 
 
 class MECCHMetapathFusion(nn.Module):
@@ -158,7 +197,8 @@ class MetapathContextEncoder(nn.Module):
 class MCCE_MHGCN(nn.Module):
     def __init__(self, graph, input_dims, hidden_dim, gnn_layers=2, dropout=0.5, use_gate=True,
                  metapaths=None, metapath_fusion="conv", context_encoder="gcn", context_use_v=False,
-                 context_heads=8, number_layers=1, fusion_mode="both", context_model="mecch"):
+                 context_heads=8, number_layers=1, fusion_mode="both", context_model="mecch",
+                 sage_aggregator_type="mean", sage_normalize=False):
         super().__init__()
         if context_model != "mecch":
             raise ValueError("The bin-based implementation currently supports --context-model mecch")
@@ -183,8 +223,18 @@ class MCCE_MHGCN(nn.Module):
             ntype: [etype for etype in graph.canonical_etypes if etype[0] == ntype and etype[2] == ntype]
             for ntype in self.ntypes
         }
-        self.intra_gcn = nn.ModuleDict({
-            ntype: nn.ModuleList([DGLGraphConvolution(hidden_dim, hidden_dim) for _ in range(gnn_layers)])
+        self.intra_sage = nn.ModuleDict({
+            ntype: nn.ModuleList([
+                DGLGraphSAGELayer(
+                    hidden_dim,
+                    hidden_dim,
+                    aggregator_type=sage_aggregator_type,
+                    activation=F.relu,
+                    dropout=dropout,
+                    normalize=sage_normalize,
+                )
+                for _ in range(gnn_layers)
+            ])
             for ntype in self.ntypes
         })
         self.context_norms = nn.ModuleList([nn.LayerNorm(hidden_dim) for _ in range(number_layers)])
@@ -208,9 +258,8 @@ class MCCE_MHGCN(nn.Module):
     def _encode_intra(self, graph, features):
         embeddings = {ntype: F.relu(self.input_projectors[ntype](features[ntype].float())) for ntype in self.ntypes}
         for ntype in self.ntypes:
-            for gcn in self.intra_gcn[ntype]:
-                embeddings[ntype] = F.relu(gcn(graph, ntype, self.intra_etypes[ntype], embeddings[ntype]))
-                embeddings[ntype] = F.dropout(embeddings[ntype], self.dropout, training=self.training)
+            for sage in self.intra_sage[ntype]:
+                embeddings[ntype] = sage(graph, ntype, self.intra_etypes[ntype], embeddings[ntype])
         return embeddings
 
     def _prepare_suffix_graphs(self, graph):
